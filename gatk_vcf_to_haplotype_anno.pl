@@ -212,11 +212,15 @@ while(<VCF>){
 		
 		# throw a SNP/InDel if it locate in intron with no effect
 		if(defined $nointron){
-			my @efftmp = uniq(@effs);
-			next if(@efftmp == 1 and $efftmp[0] eq "INTRON");
+			my $pick = 0;
+			foreach(@effs){
+				next if($_ =~ /^INTRON/);
+				$pick++;
+			}
+			next if($pick == 0);
 		}
 		
-		my @alleffs = ("REF",@effs);
+		my @alleffs = ("REF:REF",@effs);
 		push @{$hash_tag{$tag}{vars}}, "$chr;$pos;$ref;$alt;$covcount;$altcount;".join(",",@effs);
 		foreach my $sample(@keepsamples){
 			my $eff = "NA";
@@ -228,7 +232,7 @@ while(<VCF>){
 			}
 			push @{$hash_sample{$sample}{tag}{$tag}{gt}}, $gt;
 			if($gt ne "-" and defined $alleffs[$gt]){
-				$eff = $alleffs[$gt];
+				($eff) = $alleffs[$gt] =~ /(\S+)\:/;
 			}
 			$hash_sample{$sample}{tag}{$tag}{eff}{$eff}++;
 		}
@@ -363,11 +367,12 @@ sub extract_anno{
 		next if($locus ne $tag);
 		
 		if(defined $effs[$altrank]){
-			next unless($hash_impact{$impact} > $hash_impact{$effs[$altrank]});
+			my($efftmp) = $effs[$altrank] =~ /(\S+?)\:/;
+			next unless($hash_impact{$impact} > $hash_impact{$efftmp});
 		}
-		$effs[$altrank] = $impact;
+		$effs[$altrank] = "$impact:$_";
 		if($effect_tmp eq "INTRON" and $impact eq "MODIFIER"){
-			$effs[$altrank] = "INTRON";
+			$effs[$altrank] = "INTRON:$_";
 		}
 		#print "$effect\n$desc\n";
 		
