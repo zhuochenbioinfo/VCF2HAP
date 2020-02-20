@@ -1,22 +1,24 @@
 # by Zhuo Chen, IGDB, CAS
 # email1: zhuochen@genetics.ac.cn
-# email2: zhuochenbioinfo@gmail.com
+# email2: chenomics@163.com
 
 use strict;
 use warnings;
 use Getopt::Long;
 
-my($vcf,$indelvcf,$regionlist,$keeplist,$noindel,$nointron,$maf,$outpath);
+my($vcf,$indelvcf,$regionlist,$keeplist,$noindel,$nointron,$mincov,$maf,$outpath,$pass,$nohet);
 my $usage = "USAGE:\nperl $0 --snp <snp vcf> --indel <indel vcf> --reg <region list> --keep <sample list> --out <outpath> --maf <maf> --noindel\n";
 $usage .= "Specified for rice3k, SNP and InDel vcfs are given seperately.\n";
 $usage .= "<snp> is the input snp vcf file with snpEff annotation. [Necessary]\n";
-$usage .= "<indel> is the input indel vcf file with snpEff annotation. [Necessary]\n";
+$usage .= "<indel> is the input indel vcf file with snpEff annotation. [Optional]\n";
 $usage .= "<region list> is a list of regions such as genes. [Necessary]\n";
 $usage .= "<outpath> is the path to output haplotype files. [Necessary]\n";
 $usage .= "<sample list> is a list of samples. [Optional]\n";
 $usage .= "<maf> minor allele frequency. [Optional]\n";
-$usage .= "--noindel to ignore indels. [Optional]\n";
-$usage .= "--nointron to ignore variants in intron region without any predictable effect.\n";
+$usage .= "Use --noindel to ignore indels. [Optional]\n";
+$usage .= "Use --nointron to ignore variants in intron region without any predictable effect.\n";
+$usage .= "Use --pass to pick variants with ONLY 'PASS' or 'SnpCluster' tag.\n";
+$usage .= "Use --nohet to ignore hetero position.\n";
 
 GetOptions(
 	"snp=s" => \$vcf,
@@ -25,11 +27,14 @@ GetOptions(
 	"keep=s" => \$keeplist,
 	"out=s" => \$outpath,
 	"maf=s" => \$maf,
+	"cov=s" => \$mincov,
 	"noindel!" => \$noindel,
 	"nointron!" => \$nointron,
+	"pass!" => \$pass,
+	"nohet!" => \$nohet,
 ) or die $usage;
 
-die $usage unless(defined $vcf and defined $indelvcf and defined $regionlist and defined $outpath);
+die $usage unless(defined $vcf and defined $regionlist and defined $outpath);
 
 my %hash_reg;
 my %hash_tag;
@@ -121,6 +126,11 @@ while(<VCF>){
 	# split vcf line
 	my($chr,$pos,$id,$ref,$alt,$qual,$filter,$info,$format,@datas) = split/\t/;
 	
+	# filter PASS
+	if(defined $pass){
+		next unless($filter eq "PASS" or $filter eq "SnpCluster");
+	}
+	
 	# pick regions when entering a new chr
 	if($chr_tmp ne $chr){
 		@regions = ();
@@ -187,16 +197,22 @@ while(<VCF>){
 	my $altnum = @alts;
 	my $altcount = 0;
 	my $covcount = 0;
+	my $lostcount = 0;
 	
 	foreach my $sample(@keepsamples){
 		my $i = $hash_sample{$sample}{rank};
 		my $spot = $datas[$i];
 		my $gt = "-";
-		if($spot =~ /^(\d+)\//){
+		if($spot =~ /^(\d+)\/(\d+)/){
 			$gt = $1;
+			if($1 ne $2 and defined $nohet){
+				$gt = "h";
+			}
 		}
-		if($gt ne '-'){
+		if($gt ne '-' and $gt ne "h"){
 			$covcount++;
+		}else{
+			$lostcount++;
 		}
 		if($gt =~ /\d/ and $gt > 0){
 			$altcount++;
@@ -205,8 +221,12 @@ while(<VCF>){
 	
 	next if($altcount == 0);
 	
+	my $allcount = $lostcount + $covcount;
+	if(defined $mincov){
+		next unless($lostcount/$allcount < (1 - $mincov));
+	}
 	if(defined $maf){
-		next unless($altcount/$covcount > $maf and ($covcount - $altcount)/$covcount > $maf);
+		next unless($altcount/$allcount > $maf and ($covcount - $altcount)/$allcount > $maf);
 	}
 	
 	# push the variant into selected samples
@@ -230,17 +250,28 @@ while(<VCF>){
 			my $i = $hash_sample{$sample}{rank};
 			my $spot = $datas[$i];
 			my $gt = "-";
-			if($spot =~ /^(\d+)\//){
+			if($spot =~ /^(\d+)\/(\d+)/){
 				$gt = $1;
+				if($1 ne $2 and defined $nohet){
+					$gt = "h";
+				}
 			}
 			push @{$hash_sample{$sample}{tag}{$tag}{gt}}, $gt;
-			if($gt ne "-" and defined $alleffs[$gt]){
+			if($gt ne "-" and $gt ne "h" and defined $alleffs[$gt]){
 				($eff) = $alleffs[$gt] =~ /(\S+)\:/;
 			}
+			$hash_sample{$sample}{tag}{$tag}{eff}{$eff}++;
 		}
 	}
 }
 close VCF;
+
+unless(defined $indelvcf){
+	goto NOINDEL;
+}
+if(defined $noindel){
+	goto NOINDEL;
+}
 
 print "# Reading InDel VCF...\n";
 
@@ -278,6 +309,11 @@ while(<VCF>){
 	# split vcf line
 	my($chr,$pos,$id,$ref,$alt,$qual,$filter,$info,$format,@datas) = split/\t/;
 	
+	# filter PASS
+	if(defined $pass){
+		next unless($filter eq "PASS" or $filter eq "SnpCluster");
+	}
+	
 	# pick regions when entering a new chr
 	if($chr_tmp ne $chr){
 		@regions = ();
@@ -344,16 +380,22 @@ while(<VCF>){
 	my $altnum = @alts;
 	my $altcount = 0;
 	my $covcount = 0;
+	my $lostcount = 0;
 	
 	foreach my $sample(@keepsamples){
 		my $i = $hash_sample{$sample}{rank};
 		my $spot = $datas[$i];
 		my $gt = "-";
-		if($spot =~ /^(\d+)\//){
+		if($spot =~ /^(\d+)\/(\d+)/){
 			$gt = $1;
+			if($1 ne $2 and defined $nohet){
+				$gt = "h";
+			}
 		}
-		if($gt ne '-'){
+		if($gt ne '-' and $gt ne "h"){
 			$covcount++;
+		}else{
+			$lostcount++;
 		}
 		if($gt =~ /\d/ and $gt > 0){
 			$altcount++;
@@ -362,8 +404,12 @@ while(<VCF>){
 	
 	next if($altcount == 0);
 	
+	my $allcount = $lostcount + $covcount;
+	if(defined $mincov){
+		next unless($lostcount/$allcount < (1 - $mincov));
+	}
 	if(defined $maf){
-		next unless($altcount/$covcount > $maf and ($covcount - $altcount)/$covcount > $maf);
+		next unless($altcount/$allcount > $maf and ($covcount - $altcount)/$allcount > $maf);
 	}
 	
 	# push the variant into selected samples
@@ -387,17 +433,23 @@ while(<VCF>){
 			my $i = $hash_sample{$sample}{rank};
 			my $spot = $datas[$i];
 			my $gt = "-";
-			if($spot =~ /^(\d+)\//){
+			if($spot =~ /^(\d+)\/(\d+)/){
 				$gt = $1;
+				if($1 ne $2 and defined $nohet){
+					$gt = "h";
+				}
 			}
 			push @{$hash_sample{$sample}{tag}{$tag}{gt}}, $gt;
-			if($gt ne "-" and defined $alleffs[$gt]){
+			if($gt ne "-" and $gt ne "h" and defined $alleffs[$gt]){
 				($eff) = $alleffs[$gt] =~ /(\S+)\:/;
 			}
+			$hash_sample{$sample}{tag}{$tag}{eff}{$eff}++;
 		}
 	}
 }
 close VCF;
+
+NOINDEL:
 
 
 print "# Constructing haplotype...\n";
