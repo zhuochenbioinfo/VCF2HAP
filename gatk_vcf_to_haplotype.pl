@@ -1,19 +1,22 @@
 # by Zhuo Chen, IGDB, CAS
 # email1: zhuochen@genetics.ac.cn
-# email2: zhuochenbioinfo@gmail.com
+# email2: chenomics@163.com
 
 use strict;
 use warnings;
 use Getopt::Long;
 
-my($vcf,$regionlist,$keeplist,$noindel,$maf,$outpath);
-my $usage = "USAGE:\nperl $0 --vcf <vcf> --reg <region list> --keep <sample list> --out <outpath> --maf <maf> --noindel\n";
+my($vcf,$regionlist,$keeplist,$noindel,$maf,$mincov,$outpath,$nohet,$pass);
+my $usage = "USAGE:\nperl $0 --vcf <vcf> --reg <region list> --keep <sample list> --out <outpath> --cov <minium cover> --maf <maf> --noindel\n";
 $usage .= "<vcf> is the input vcf file. [Necessary]\n";
 $usage .= "<region list> is a list of regions such as genes. [Necessary]\n";
 $usage .= "<outpath> is the path to output haplotype files. [Necessary]\n";
 $usage .= "<sample list> is a list of samples. [Optional]\n";
 $usage .= "<maf> minor allele frequency. [Optional]\n";
-$usage .= "--noindel to ignore indels. [Optional]\n";
+$usage .= "<minium cover> minium coverage ratio of a variant to be picked.\n";
+$usage .= "Use --noindel to ignore indels. [Optional]\n";
+$usage .= "Use --nohet to mark heterozygous genotype by \"h\".\n";
+$usage .= "Use --pass to pick variants with ONLY 'PASS' or 'SnpCluster' tag.\n";
 
 GetOptions(
 	"vcf=s" => \$vcf,
@@ -21,7 +24,10 @@ GetOptions(
 	"keep=s" => \$keeplist,
 	"out=s" => \$outpath,
 	"maf=s" => \$maf,
+	"cov=s" => \$mincov,
 	"noindel!" => \$noindel,
+	"nohet!" => \$nohet,
+	"pass!" => \$pass,
 ) or die $usage;
 
 die $usage unless(defined $vcf and defined $regionlist and defined $outpath);
@@ -114,8 +120,13 @@ while(<VCF>){
 	next if($_ =~ /^#/);
 	
 	# split vcf line
-	my($chr,$pos,$id,$ref,$alt,$qual,$filter,$info,$format,@datas) = split/\t/;
+	my($chr,$pos,$id,$ref,$alt,$qual,$filter,$info,$format,$datas_join) = split/\t/,$_,10;
 	
+	# check pass
+	if(defined $pass){
+		next unless($filter eq "PASS" or $filter eq "SnpCluster");
+	}
+
 	# pick regions when entering a new chr
 	if($chr_tmp ne $chr){
 		@regions = ();
@@ -182,16 +193,24 @@ while(<VCF>){
 	my $altnum = @alts;
 	my $altcount = 0;
 	my $covcount = 0;
+	my $lostcount = 0;
 	
+	my @datas = split/\t/,$datas_join;
+
 	foreach my $sample(@keepsamples){
 		my $i = $hash_sample{$sample}{rank};
 		my $spot = $datas[$i];
 		my $gt = "-";
-		if($spot =~ /^(\d+)\//){
+		if($spot =~ /^(\d+)\/(\d+)/){
 			$gt = $1;
+			if(defined $nohet and $1 ne $2){
+				$gt = "h";
+			}
 		}
-		if($gt ne '-'){
+		if($gt ne '-' and $gt ne "h"){
 			$covcount++;
+		}else{
+			$lostcount++;
 		}
 		if($gt =~ /\d/ and $gt > 0){
 			$altcount++;
@@ -200,8 +219,12 @@ while(<VCF>){
 	
 	next if($altcount == 0);
 	
+	my $allcount = $lostcount + $covcount;
+	if(defined $mincov){
+		next unless($lostcount/$allcount < (1 - $mincov));
+	}
 	if(defined $maf){
-		next unless($altcount/$covcount > $maf and ($covcount - $altcount)/$covcount > $maf);
+		next unless($altcount/$allcount > $maf and ($covcount - $altcount)/$allcount > $maf);
 	}
 	
 	# push the variant into selected samples
@@ -211,8 +234,11 @@ while(<VCF>){
 			my $i = $hash_sample{$sample}{rank};
 			my $spot = $datas[$i];
 			my $gt = "-";
-			if($spot =~ /^(\d+)\//){
+			if($spot =~ /^(\d+)\/(\d+)/){
 				$gt = $1;
+				if(defined $nohet and $1 ne $2){
+					$gt = "h";
+				}
 			}
 			push @{$hash_sample{$sample}{tag}{$tag}}, $gt;
 		}
