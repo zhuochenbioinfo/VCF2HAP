@@ -1,21 +1,26 @@
 # by Zhuo Chen, IGDB, CAS
 # email1: zhuochen@genetics.ac.cn
-# email2: zhuochenbioinfo@gmail.com
+# email2: chenomics@163.com
 
 use strict;
 use warnings;
 use Getopt::Long;
 
-my($vcf,$annofile,$regionlist,$keeplist,$noindel,$nointron,$maf,$outpath);
-my $usage = "USAGE:\nperl $0 --vcf <vcf> --anno <snpEff file> --reg <region list> --keep <sample list> --out <outpath> --maf <maf> --noindel\n";
+my($vcf,$annofile,$regionlist,$keeplist,$noindel,$nointron,$nohet,$maf,$mincov,$outpath,$pass,$preferAlt);
+my $usage = "USAGE:\nperl $0 --vcf <vcf> --anno <snpEff file> --reg <region list> --keep <sample list> --out <outpath> --maf <maf> --cov <minium cover> --noindel --pass --alt\n";
 $usage .= "<vcf> is the input vcf file. [Necessary]\n";
 $usage .= "<snpEff file> snpEff result of <vcf> file[Necessary]\n";
 $usage .= "<region list> is a list of regions such as genes. [Necessary]\n";
 $usage .= "<outpath> is the path to output haplotype files. [Necessary]\n";
 $usage .= "<sample list> is a list of samples. [Optional]\n";
 $usage .= "<maf> minor allele frequency. [Optional]\n";
+$usage .= "<minium cover> minium coverage ratio of a variant to be picked.\n";
 $usage .= "--noindel to ignore indels. [Optional]\n";
 $usage .= "--nointron to ignore variants in intron region without any predictable effect.\n";
+$usage .= "Use --pass to pick variants with ONLY 'PASS' or 'SnpCluster' tag.\n";
+$usage .= "Use --alt to select the second type in a hetero position.\n";
+$usage .= "Use --nohet to ignore hetero position.\n";
+$usage .= "Note: variants must be annotated by snpEff version SnpEff 3.3 (build 2013-05-30).\n";
 
 GetOptions(
 	"vcf=s" => \$vcf,
@@ -24,8 +29,12 @@ GetOptions(
 	"keep=s" => \$keeplist,
 	"out=s" => \$outpath,
 	"maf=s" => \$maf,
+	"cov=s" => \$mincov,
 	"noindel!" => \$noindel,
 	"nointron!" => \$nointron,
+	"pass!" => \$pass,
+	"alt!" => \$preferAlt,
+	"nohet!" => \$nohet,
 ) or die $usage;
 
 die $usage unless(defined $vcf and defined $annofile and defined $regionlist and defined $outpath);
@@ -129,11 +138,16 @@ while(<VCF>){
 	
 	chomp($annoline);
 	# split vcf line
-	my($chr,$pos,$id,$ref,$alt,$qual,$filter,$info,$format,@datas) = split/\t/;
+	my($chr,$pos,$id,$ref,$alt,$qual,$filter,$info,$format,$datas_join) = split/\t/,$_,10;
 	my($chr_,$pos_,undef,$ref_,undef,undef,undef,$info_,@else) = split/\t/,$annoline;
 	
 	unless($chr eq $chr_ && $pos eq $pos_ && $ref eq $ref_){
 		die "#ERROR line at $chr $pos $chr_ $pos_\n";
+	}
+	
+	# filter PASS
+	if(defined $pass){
+		next unless($filter eq "PASS" or $filter eq "SnpCluster");
 	}
 	
 	# pick regions when entering a new chr
@@ -198,20 +212,31 @@ while(<VCF>){
 	}
 	next if($checkindel == 1);
 	
+	my @datas = split/\t/,$datas_join;	
+
 	# check if the variant exists in the selected samples
 	my $altnum = @alts;
 	my $altcount = 0;
 	my $covcount = 0;
+	my $lostcount = 0;
 	
 	foreach my $sample(@keepsamples){
 		my $i = $hash_sample{$sample}{rank};
 		my $spot = $datas[$i];
 		my $gt = "-";
-		if($spot =~ /^(\d+)\//){
+		if($spot =~ /^(\d+)\/(\d+)/){
 			$gt = $1;
+			if(defined $preferAlt){
+				$gt = $2;
+			}
+			if($1 ne $2 and defined $nohet){
+				$gt = "h";
+			}
 		}
-		if($gt ne '-'){
+		if($gt ne '-' and $gt ne "h"){
 			$covcount++;
+		}else{
+			$lostcount++;
 		}
 		if($gt =~ /\d/ and $gt > 0){
 			$altcount++;
@@ -220,8 +245,12 @@ while(<VCF>){
 	
 	next if($altcount == 0);
 	
+	my $allcount = $lostcount + $covcount;
+	if(defined $mincov){
+		next unless($lostcount/$allcount < (1 - $mincov));
+	}
 	if(defined $maf){
-		next unless($altcount/$covcount > $maf and ($covcount - $altcount)/$covcount > $maf);
+		next unless($altcount/$allcount > $maf and ($covcount - $altcount)/$allcount > $maf);
 	}
 	
 	# push the variant into selected samples
@@ -245,11 +274,17 @@ while(<VCF>){
 			my $i = $hash_sample{$sample}{rank};
 			my $spot = $datas[$i];
 			my $gt = "-";
-			if($spot =~ /^(\d+)\//){
+			if($spot =~ /^(\d+)\/(\d+)/){
 				$gt = $1;
+				if(defined $preferAlt){
+					$gt = $2;
+				}
+				if($1 ne $2 and defined $nohet){
+					$gt = "h";
+				}
 			}
 			push @{$hash_sample{$sample}{tag}{$tag}{gt}}, $gt;
-			if($gt ne "-" and defined $alleffs[$gt]){
+			if($gt ne "-" and $gt ne "h" and defined $alleffs[$gt]){
 				($eff) = $alleffs[$gt] =~ /(\S+)\:/;
 			}
 			$hash_sample{$sample}{tag}{$tag}{eff}{$eff}++;
@@ -264,7 +299,7 @@ print "# Constructing haplotype...\n";
 # construct haplotype
 
 my @sorted_tags = sort {$hash_tag{$a}{chrnum} <=> $hash_tag{$b}{chrnum} or $hash_tag{$a}{start} <=> $hash_tag{$b}{start}} keys %hash_tag;
-my @impacts	= qw(HIGH MODERATE LOW MODIFIER REF NA);
+my @impacts	= qw(HIGH MODERATE LOW MODIFIER INTRON REF NA);
 
 for(my $i = 0; $i < @sorted_tags; $i++){
 	my $tag = $sorted_tags[$i];
@@ -381,6 +416,9 @@ sub extract_anno{
 		
 		my $impact = $descs[0];
 		my $locus = $descs[5];
+		if($locus =~ /^Gene_(\S+?)\.t\d+$/){
+			$locus = $1; 
+		}
 		my $transcript = $descs[8];
 		my $altrank = $descs[10] - 1;
 		
