@@ -7,4 +7,4 @@ Haplotype created by *gatk_vcf_to_haplotype.pl* programe contains following file
 - *prefix.vars* containing 7 columns: **chrom**, **position**, **reference allele**, **alternative allele**, **covered count**, **alternative count**, **annotation**;
 
 ## 2. Haplotype format transforming to other data table
-- *haplotype_to_popart.pl*: transforming haplotype to nexus format specified for [PopART](http://popart.otago.ac.nz/index.shtml), enabling elegent haplotype network construction and plotting.
+- *haplotype_to_popart.pl*: transforming haplotype to **NEXUS** format specified for [PopART](http://popart.otago.ac.nz/index.shtml), enabling elegent haplotype network construction and plotting.
