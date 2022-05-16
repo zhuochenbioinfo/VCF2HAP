@@ -1,6 +1,6 @@
 # by Zhuo Chen, IGDB, CAS
 # email1: zhuochen@genetics.ac.cn
-# email2: chenomics@163.com
+# email2: zhuochenbioinfo@gmail.com
 
 use strict;
 use warnings;
@@ -95,7 +95,11 @@ if(defined $keeplist){
 
 print "# Reading VCF...\n";
 
-open(VCF,"<$vcf") or die $!;
+if($vcf =~ /gz$|gzip$/){
+	open(VCF,"zcat $vcf|") or die $!;
+}else{
+	open(VCF,"<$vcf") or die $!;
+}
 open(ANNO,"<$annofile") or die $!;
 
 my @keepsamples = ();

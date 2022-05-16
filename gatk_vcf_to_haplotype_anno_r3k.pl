@@ -1,6 +1,6 @@
 # by Zhuo Chen, IGDB, CAS
 # email1: zhuochen@genetics.ac.cn
-# email2: chenomics@163.com
+# email2: zhuochenbioinfo@gmail.com
 
 use strict;
 use warnings;
